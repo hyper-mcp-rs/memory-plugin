@@ -69,30 +69,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # we dont need to build multi-arch plugin images as they are wasm32-wasip1
-      # so we can just build amd64 and push it to the registry
-      - name: Build and push plugin image
+      # Build WASM once (arch-independent) and create multi-arch manifest
+      - name: Build and push plugin image (single arch, WASM is arch-independent)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository }}:nightly
+            ghcr.io/${{ github.repository }}:nightly-amd64
+
+      - name: Create multi-arch manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="ghcr.io/${{ github.repository }}"
+
+          # Create multi-arch manifest for nightly tag
+          docker buildx imagetools create -t "${IMAGE}:nightly" \
+            "${IMAGE}:nightly-amd64" \
+            "${IMAGE}:nightly-amd64"
+
+          # Get the manifest digest
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:nightly" --format '{{json .}}' | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | cut -d'"' -f4)
+          echo "IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
 
       - name: Sign image by digest
         shell: bash
         run: |
           set -euo pipefail
 
-          DIGEST="${{ steps.build.outputs.digest }}"
+          DIGEST="${{ env.IMAGE_DIGEST }}"
           IMAGE="ghcr.io/${{ github.repository }}"
 
           echo "Signing ${IMAGE}@${DIGEST}"
           cosign sign --yes "${IMAGE}@${DIGEST}"
-
-          echo "IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
 
       - name: Write release notes (with immutable digest)
         id: notes
