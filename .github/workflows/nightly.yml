@@ -69,52 +69,40 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build WASM once on amd64 (WASM is platform-independent, runs on any arch)
-      - name: Build and push plugin image
+      # Build WASM for both platforms at once
+      # WASM is platform-independent, so buildx creates proper multi-arch manifest automatically
+      - name: Build and push multi-arch plugin image
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           provenance: false
           tags: |
-            ghcr.io/${{ github.repository }}:nightly-build
+            ghcr.io/${{ github.repository }}:nightly
 
-      - name: Create multi-platform manifest (same image for both archs)
+      - name: Get manifest digest for signing
         shell: bash
         run: |
           set -euo pipefail
 
           IMAGE="ghcr.io/${{ github.repository }}"
-          DIGEST="${{ steps.build.outputs.digest }}"
 
-          # Create multi-arch manifest pointing both amd64 and arm64 to same WASM image
-          # Since WASM is platform-independent, both architectures use the same binary
-          docker manifest create "${IMAGE}:nightly" \
-            --amend "${IMAGE}@${DIGEST}"
+          # Get the manifest list digest for signing
+          MANIFEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE}:nightly" --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "IMAGE_DIGEST=${MANIFEST_DIGEST}" >> $GITHUB_ENV
 
-          docker manifest annotate "${IMAGE}:nightly" "${IMAGE}@${DIGEST}" \
-            --os linux --arch amd64
-
-          docker manifest annotate "${IMAGE}:nightly" "${IMAGE}@${DIGEST}" \
-            --os linux --arch arm64
-
-          docker manifest push "${IMAGE}:nightly"
-
-          # Get the manifest digest using the build output digest
-          echo "IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
-
-      - name: Sign image by digest
+      - name: Sign manifest list by digest
         shell: bash
         run: |
           set -euo pipefail
 
-          DIGEST="${{ env.IMAGE_DIGEST }}"
+          MANIFEST_DIGEST="${{ env.IMAGE_DIGEST }}"
           IMAGE="ghcr.io/${{ github.repository }}"
 
-          echo "Signing ${IMAGE}@${DIGEST}"
-          cosign sign --yes "${IMAGE}@${DIGEST}"
+          echo "Signing multi-arch manifest list ${IMAGE}@${MANIFEST_DIGEST}"
+          cosign sign --yes "${IMAGE}@${MANIFEST_DIGEST}"
 
       - name: Write release notes (with immutable digest)
         id: notes
