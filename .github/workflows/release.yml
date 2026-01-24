@@ -63,15 +63,30 @@ jobs:
           TAG="${{ github.ref_name }}"
           DIGEST="${{ steps.build.outputs.digest }}"
 
-          # Use buildx imagetools to create manifests with same digest for both platforms
-          # Since WASM is platform-independent, both amd64 and arm64 use the same image
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${TAG}" \
-            "${IMAGE}:${TAG}-build"
+          # Create multi-arch manifest pointing both amd64 and arm64 to same WASM image
+          # Since WASM is platform-independent, both architectures use the same binary
+          docker manifest create "${IMAGE}:${TAG}" \
+            --amend "${IMAGE}@${DIGEST}"
 
-          docker buildx imagetools create \
-            --tag "${IMAGE}:latest" \
-            "${IMAGE}:latest-build"
+          docker manifest annotate "${IMAGE}:${TAG}" "${IMAGE}@${DIGEST}" \
+            --os linux --arch amd64
+
+          docker manifest annotate "${IMAGE}:${TAG}" "${IMAGE}@${DIGEST}" \
+            --os linux --arch arm64
+
+          docker manifest push "${IMAGE}:${TAG}"
+
+          # Do the same for latest tag
+          docker manifest create "${IMAGE}:latest" \
+            --amend "${IMAGE}@${DIGEST}"
+
+          docker manifest annotate "${IMAGE}:latest" "${IMAGE}@${DIGEST}" \
+            --os linux --arch amd64
+
+          docker manifest annotate "${IMAGE}:latest" "${IMAGE}@${DIGEST}" \
+            --os linux --arch arm64
+
+          docker manifest push "${IMAGE}:latest"
 
           # Get the manifest digest using the build output digest
           echo "IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
