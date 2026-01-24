@@ -41,37 +41,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push plugin image (single arch, WASM is arch-independent)
+      # Build WASM once on amd64 (WASM is platform-independent, runs on any arch)
+      - name: Build and push plugin image
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64
+          provenance: false
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}-amd64
-            ghcr.io/${{ github.repository }}:latest-amd64
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}-build
+            ghcr.io/${{ github.repository }}:latest-build
 
-      - name: Create multi-arch manifest
+      - name: Create multi-platform manifests (same image for both archs)
         shell: bash
         run: |
           set -euo pipefail
 
           IMAGE="ghcr.io/${{ github.repository }}"
           TAG="${{ github.ref_name }}"
+          DIGEST="${{ steps.build.outputs.digest }}"
 
-          # Create multi-arch manifest for version tag
-          docker buildx imagetools create -t "${IMAGE}:${TAG}" \
-            "${IMAGE}:${TAG}-amd64" \
-            "${IMAGE}:${TAG}-amd64"
+          # Use buildx imagetools to create manifests with same digest for both platforms
+          # Since WASM is platform-independent, both amd64 and arm64 use the same image
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}" \
+            "${IMAGE}:${TAG}-build"
 
-          # Create multi-arch manifest for latest tag
-          docker buildx imagetools create -t "${IMAGE}:latest" \
-            "${IMAGE}:latest-amd64" \
-            "${IMAGE}:latest-amd64"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}:latest-build"
 
-          # Get the manifest digest
-          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .}}' | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | cut -d'"' -f4)
+          # Get the manifest digest using the build output digest
           echo "IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
 
       - name: Sign image by digest
